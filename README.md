@@ -9,7 +9,10 @@ This data generator is implemented in Spark. It generates data with a real-world
 
 The example of running the data generator:
 
-    spark-submit --class ca.uwaterloo.iss4e.Driver --master yarn-client --driver-memory 4g --num-executors 30 --executor-cores 1 --executor-memory 5g SmartMeterAnalytics-1.0-SNAPSHOT.jar DataGenerator 
+
+```sh
+$ spark-submit --class ca.uwaterloo.iss4e.Driver --master yarn-client --driver-memory 4g --num-executors 30 --executor-cores 1 --executor-memory 5g SmartMeterAnalytics-1.0-SNAPSHOT.jar DataGenerator
+```
 
 **2. Study variability of Daily Consumption Patterns**
 
