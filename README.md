@@ -20,3 +20,4 @@ We do the K-SC clustering on the daily consumption patterns using the following 
  
 * _Residential water consumption data_
  
+To run the clustering algorithms, first you have to run the data preparation program to prepare the data according to the days
