@@ -1,5 +1,5 @@
 /home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/Driver.java
 /home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/clustering/PrepareDataPoints.java
-/home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/clustering/KMean.java
 /home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/datagen/DataGenerator.java
+/home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/clustering/KSCClustering.java
 /home/xiuli/IdeaProjects/SmartMeterAnalytics/src/main/java/ca/uwaterloo/iss4e/datagen/DataPreparator.java

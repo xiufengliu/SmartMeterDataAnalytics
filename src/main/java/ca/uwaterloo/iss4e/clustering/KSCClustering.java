@@ -18,10 +18,12 @@ import org.apache.spark.broadcast.Broadcast;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import scala.Tuple2;
 import scala.Tuple3;
@@ -74,26 +76,26 @@ public class KSCClustering implements Serializable {
   }
 
 
-  protected static JavaPairRDD<Integer, Double[]> loadCentroids(JavaSparkContext sc, String centroidInputDir) {
+  protected static JavaPairRDD<Integer, Tuple2<Integer,Double[]>> loadCentroids(JavaSparkContext sc, String centroidInputDir) {
     return sc.textFile(centroidInputDir)
-        .mapToPair(new PairFunction<String, Integer, Double[]>() {
-          public Tuple2<Integer, Double[]> call(String line) throws Exception {
+        .mapToPair(new PairFunction<String, Integer, Tuple2<Integer,Double[]>>() {
+          public Tuple2<Integer, Tuple2<Integer,Double[]>> call(String line) throws Exception {
             String[] fields = line.split(keyDelim);
-            int k = Integer.parseInt(fields[0]);
+            int centroidID = Integer.parseInt(fields[0]);
             String[] points = fields[1].split(pointDelim);
             Double[] pointArray = new Double[points.length];
             for (int i = 0; i < points.length; ++i) {
               pointArray[i] = Double.parseDouble(points[i]);
             }
-            return new Tuple2<Integer, Double[]>(k, pointArray);
+            return new Tuple2<Integer, Tuple2<Integer,Double[]>>(centroidID, new Tuple2<Integer, Double[]>(1, pointArray));
           }
         });
   }
 
-  protected static Map<Integer, Double[]> initCentroids(JavaPairRDD<Integer, Double[]> allCentroids, final int K) {
-    return allCentroids.filter(new Function<Tuple2<Integer, Double[]>, Boolean>() {
-      public Boolean call(Tuple2<Integer, Double[]> centroids) throws Exception {
-        return centroids._1().intValue() <= K;
+  protected static Map<Integer, Tuple2<Integer,Double[]>> initCentroids(JavaPairRDD<Integer, Tuple2<Integer,Double[]>> allCentroids, final int K) {
+    return allCentroids.filter(new Function<Tuple2<Integer, Tuple2<Integer,Double[]>>, Boolean>() {
+      public Boolean call(Tuple2<Integer, Tuple2<Integer,Double[]>> centroids) throws Exception {
+        return centroids._1() <= K;
       }
     }).collectAsMap();
   }
@@ -186,7 +188,7 @@ public class KSCClustering implements Serializable {
     }
   }
 
-  protected static JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assign(final Broadcast<Map<Integer, Double[]>> centroids,
+  protected static JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assign(final Broadcast<Map<Integer, Tuple2<Integer,Double[]>>> centroids,
                                                                                 final JavaPairRDD<Long, Double[]> points,
                                                                                 final int maxShiftNum) {
     return points.mapToPair(new PairFunction<Tuple2<Long, Double[]>, Integer, Tuple3<Long, Double[], Integer>>() {
@@ -196,9 +198,9 @@ public class KSCClustering implements Serializable {
         int centroidLength = 0;
         int closestCentroidID = -1;
 
-        for (Map.Entry<Integer, Double[]> entry : centroids.getValue().entrySet()) {
+        for (Map.Entry<Integer, Tuple2<Integer,Double[]>> entry : centroids.getValue().entrySet()) {
           int centroidID = entry.getKey();
-          Double[] centroid = entry.getValue();
+          Double[] centroid = entry.getValue()._2();
           double[] kscDist = KscDistance(point._2(), centroid, maxShiftNum);
           if (kscDist[0] < closestDistance) {
             closestDistance = kscDist[0];
@@ -217,9 +219,16 @@ public class KSCClustering implements Serializable {
     });
   }
 
-
-  protected static JavaPairRDD<Integer, Double[]> calculateNewCentroids(final JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assigned,
-                                                                        final Broadcast<Map<Integer, Double[]>> oldCentroids,
+  /**
+   *
+   * @param assigned
+   * @param oldCentroids
+   * @param converged
+   * @param delta
+   * @return (centroidID, Tuple2(NumberOfElements, centroidArray))
+   */
+  protected static JavaPairRDD<Integer, Tuple2<Integer,Double[]>> calculateNewCentroids(final JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assigned,
+                                                                        final Broadcast<Map<Integer, Tuple2<Integer,Double[]>>> oldCentroids,
                                                                         final Accumulator<Integer> converged, final double delta) {
     int numCentroids = oldCentroids.getValue().size();
     CentroidPartitioner partition = new CentroidPartitioner(numCentroids);
@@ -239,8 +248,8 @@ public class KSCClustering implements Serializable {
         int newSum = x._3() + y._3();
         return new Tuple3<Long, Double[], Integer>(-1L, newPoint, newSum);
       }
-    }).mapToPair(new PairFunction<Tuple2<Integer, Tuple3<Long, Double[], Integer>>, Integer, Double[]>() {
-      public Tuple2<Integer, Double[]> call(Tuple2<Integer, Tuple3<Long, Double[], Integer>> x) throws Exception {
+    }).mapToPair(new PairFunction<Tuple2<Integer, Tuple3<Long, Double[], Integer>>, Integer, Tuple2<Integer,Double[]>>() {
+      public Tuple2<Integer, Tuple2<Integer,Double[]>> call(Tuple2<Integer, Tuple3<Long, Double[], Integer>> x) throws Exception {
         Integer centroidID = x._1();
         Double[] partial = x._2()._2();
         int n = x._2()._3();
@@ -248,11 +257,11 @@ public class KSCClustering implements Serializable {
         for (int i = 0; i < partial.length; ++i) {
           newCentroid[i] = partial[i] / n;
         }
-        Double[] oldCentroid = oldCentroids.getValue().get(centroidID);
+        Double[] oldCentroid = oldCentroids.getValue().get(centroidID)._2();
         if (euclideanDistance(newCentroid, oldCentroid) > delta) {
           converged.add(1);
         }
-        return new Tuple2<Integer, Double[]>(centroidID, newCentroid);
+        return new Tuple2<Integer, Tuple2<Integer,Double[]>>(centroidID, new Tuple2<Integer, Double[]>(n, newCentroid));
       }
     });
 
@@ -352,7 +361,7 @@ public class KSCClustering implements Serializable {
 
 
   protected static double calculateSSB(final JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assigned, //assignedCentroidID, (ID, pointArray, 1)
-                                       final Map<Integer, Double[]> centroidMap,
+                                       final Map<Integer, Tuple2<Integer,Double[]>> centroidMap,
                                        final Double[]overallCentroidArray) {
 
     Map<Integer, Integer> centroidCountMap = assigned.mapToPair(new PairFunction<Tuple2<Integer, Tuple3<Long, Double[], Integer>>, Integer, Integer>() {
@@ -366,9 +375,9 @@ public class KSCClustering implements Serializable {
     }).collectAsMap();
 
     double SSB = 0.0;
-    for (Map.Entry<Integer, Double[]> entry : centroidMap.entrySet()) {
+    for (Map.Entry<Integer, Tuple2<Integer,Double[]>> entry : centroidMap.entrySet()) {
       Integer centroidID = entry.getKey();
-      Double[] centroidArray = entry.getValue();
+      Double[] centroidArray = entry.getValue()._2();
       Integer n = centroidCountMap.get(centroidID);
       Double dist = euclideanDistance(centroidArray, overallCentroidArray);
       SSB += n * Math.pow(dist, 2);
@@ -378,11 +387,11 @@ public class KSCClustering implements Serializable {
 
 
   protected static double calculateSSW(final JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assigned, //assignedCentroidID, (ID, pointArray, 1)
-                                       final Broadcast<Map<Integer, Double[]>> centroids) {
+                                       final Broadcast<Map<Integer, Tuple2<Integer,Double[]>>> centroids) {
      return assigned.map(new Function<Tuple2<Integer, Tuple3<Long, Double[], Integer>>, Double>() {
       public Double call(Tuple2<Integer, Tuple3<Long, Double[], Integer>> x) throws Exception {
-        Integer cetroidID = x._1();
-        Double[] centroid = centroids.getValue().get(cetroidID);
+        Integer centroidID = x._1();
+        Double[] centroid = centroids.getValue().get(centroidID)._2();
         double dist = euclideanDistance(x._2()._2(), centroid);
         return Math.pow(dist, 2);
       }
@@ -409,14 +418,14 @@ public class KSCClustering implements Serializable {
     JavaSparkContext sc = new JavaSparkContext(conf);
 
     JavaPairRDD<Long, Double[]> pointsRDD = loadPoints(sc, pointInputDir, minPartitions).cache(); //(ID, pointArray)
-    JavaPairRDD<Integer, Double[]> seedCentroidsRDD = loadCentroids(sc, centroidInputDir).cache();//(centroidID, pointArray)
+    JavaPairRDD<Integer, Tuple2<Integer,Double[]>> seedCentroidsRDD = loadCentroids(sc, centroidInputDir).cache();//(centroidID, pointArray)
 
 
 
 
     JavaPairRDD<Integer, Tuple3<Long, Double[], Integer>> assignedPointsRDD = null; //Key=centroidID, values=(ID, pointArray, 1)
-    JavaPairRDD<Integer, Double[]> centroidsRDD = null;  //(CentroidID, centroidArray)
-    Map<Integer, Double[]> centroidMap = null;
+    JavaPairRDD<Integer, Tuple2<Integer,Double[]>> centroidsRDD = null;  //([CentroidID,numberOfElement] centroidArray)
+    Map<Integer, Tuple2<Integer,Double[]>> centroidMap = null;
 
     boolean hasCoverage = false;
     for (int K=startClusterNum; !hasCoverage && K<(endClusterNum+1); K+=1) {
@@ -426,7 +435,7 @@ public class KSCClustering implements Serializable {
       while (iteration < maxIteration && !hasConverged) {
        // log.info("Liu:  Starting Iteration " + iteration + "\n");
 
-        Broadcast<Map<Integer, Double[]>> broadcast = sc.broadcast(centroidMap);
+        Broadcast<Map<Integer, Tuple2<Integer,Double[]>>> broadcast = sc.broadcast(centroidMap);
         Accumulator<Integer> accumulator = sc.accumulator(0);
         assignedPointsRDD = assign(broadcast, pointsRDD, maxShiftNum);
 
@@ -448,11 +457,18 @@ public class KSCClustering implements Serializable {
       hasCoverage = coverage>=leastCoverage;
     }
 
+    TreeMap<Integer, Tuple2<Integer,Double[]>> treeMap = new TreeMap<Integer, Tuple2<Integer, Double[]>>();
+    treeMap.putAll(centroidMap);
+    long totalCount = 0L;
+    for (Map.Entry<Integer, Tuple2<Integer,Double[]>> centroid : treeMap.entrySet()) {
+      totalCount += centroid.getValue()._1();
+    }
     List<String> list = new ArrayList<String>();
-    for (Map.Entry<Integer, Double[]> centroid : centroidMap.entrySet()) {
-      Integer label = centroid.getKey();
-      Double[] point = centroid.getValue();
-      list.add(label + "|" + StringUtils.join(point, pointDelim));
+    for (Map.Entry<Integer, Tuple2<Integer,Double[]>> centroid : treeMap.entrySet()) {
+      Integer centroidID = centroid.getKey();
+      double share = centroid.getValue()._1()*100.0/totalCount;
+      Double[] point = centroid.getValue()._2();
+      list.add(centroidID + "|"+ share+ "|"+ StringUtils.join(point, pointDelim));
     }
 
     sc.parallelize(list)
