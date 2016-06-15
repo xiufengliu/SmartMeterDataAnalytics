@@ -1,13 +1,13 @@
 package ca.uwaterloo.iss4e.clustering;
 
-import org.apache.commons.lang.StringUtils;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
+import org.apache.commons.lang.StringUtils;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.Function;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.api.java.function.PairFunction;
 
@@ -25,103 +25,149 @@ import scala.Tuple2;
 public class PrepareDataPoints {
   private static final Logger log = Logger.getLogger(PrepareDataPoints.class);
   private static final String fieldDelim = "\\|";
-  private static final String pointDelim = ",";
 
-  public static void run(final String inputDir, final String outputDir, final int windowSize) {
+  public static void preparePoints(final String inputDir, final String outputDir, final int windowSize) {
     SparkConf conf = new SparkConf().setAppName("Liu: Prepare data points");
 
+    //1000|2010-11-13 22:00:00|1.224
+    //1000|2010-11-13 23:00:00|0.551
     JavaSparkContext sc = new JavaSparkContext(conf);
     sc.textFile(inputDir)
-        .mapToPair(new PairFunction<String, String, Double[]>() {
-          public Tuple2<String, Double[]> call(String line) throws Exception {//line =
-            //essex: 19419|2011-04-03 04:00:00|1.21|1.6
-            //dataport: 871|2013-12-02 12:00:00-06|0.22178333333333333333
-            //water: 1|2012-01-01 12:00:00|
-            if (line.endsWith("|")){
-              line = line+"-1.0";
+        .flatMapToPair(new PairFlatMapFunction<String, String, Tuple2<Integer, Double>>() {
+          public Iterable<Tuple2<String, Tuple2<Integer, Double>>> call(String s) throws Exception {
+            List<Tuple2<String, Tuple2<Integer, Double>>> list = new ArrayList<Tuple2<String, Tuple2<Integer, Double>>>();
+            String[] fields = s.split(fieldDelim);
+            if (fields.length>2) {
+              String meterID = fields[0];
+              if (StringUtils.isNotEmpty(fields[2])&&StringUtils.isNumeric(fields[2])) {
+                Double reading = Double.parseDouble(fields[2]);
+                String[] arr = fields[1].replace("-", "").split(" ");
+                String ID = meterID + arr[0].substring(2); //1000 120101
+                Integer hour = Integer.parseInt(arr[1].split(":")[0]);
+                list.add(new Tuple2<String, Tuple2<Integer, Double>>(ID, new Tuple2<Integer, Double>(hour, reading)));
+              }
             }
-            String[] fields = line.split(fieldDelim);
-            String meterID = fields[0];
-            String YYMMDDHH = ((fields[1].replace("-", "").replace(" ", "").split(":"))[0]).substring(2);
-            return new Tuple2<String, Double[]>(meterID, new Double[]{Double.parseDouble(YYMMDDHH), Double.parseDouble(fields[2])});
+            return list;
           }
         }).groupByKey()
-        .flatMapToPair(new PairFlatMapFunction<Tuple2<String, Iterable<Double[]>>, Integer, String>() {
-          public Iterable<Tuple2<Integer, String>> call(Tuple2<String, Iterable<Double[]>> tuple) throws Exception {// (MeterID, Iterable[YYMMDDHH, reading])
-            String meterID = tuple._1();
-            Iterator<Double[]> itr = tuple._2().iterator();
-            TreeMap<Integer, Double> sortedMap = new TreeMap<Integer, Double>();
+        .flatMapToPair(new PairFlatMapFunction<Tuple2<String, Iterable<Tuple2<Integer, Double>>>, String, Tuple2<String, Double[]>>() {
+          public Iterable<Tuple2<String, Tuple2<String, Double[]>>> call(Tuple2<String, Iterable<Tuple2<Integer, Double>>> x) throws Exception {
+            String ID = x._1();
+            String meterID = ID.substring(0, ID.length() - 6);
+            String YYMMDD = ID.substring(ID.length() - 6);
 
+            Iterator<Tuple2<Integer, Double>> itr = x._2().iterator();
+            List<Tuple2<String, Tuple2<String, Double[]>>> list = new ArrayList<Tuple2<String, Tuple2<String, Double[]>>>();
+            int cnt = 0;
+            Double[] readings = new Double[24];
+            double sum = 0.0;
             while (itr.hasNext()) {
-              Double[] values = itr.next();
-              int YYMMDDHH = (int)values[0].doubleValue();
-              sortedMap.put(YYMMDDHH, values[1]);
+              Tuple2<Integer, Double> t = itr.next();
+              int h = t._1();
+              readings[h] = t._2();
+              ++cnt;
+              sum += t._2().doubleValue();
             }
-
-
-
-            Collection<Integer> YYMMDDHHs = sortedMap.keySet();
-            Integer[] YYMMDDHHArray = YYMMDDHHs.toArray(new Integer[YYMMDDHHs.size()]);
-
-            Double[] point = new Double[windowSize];
-            List<Tuple2<Integer, String>> points = new ArrayList<Tuple2<Integer, String>>();
-
-            int shift = (windowSize - 24) / 2;
-
-            int startPost = 0;
-            for (;startPost<YYMMDDHHArray.length; ++startPost){//This ensure start from 00:00:00
-              if (YYMMDDHHArray[startPost]%100==0){
-                break;
-              }
+            if (cnt==24 && sum>0.0) {
+              list.add(new Tuple2<String, Tuple2<String, Double[]>>(meterID, new Tuple2<String, Double[]>(YYMMDD, readings)));
             }
-
-            startPost += (shift == 0) ? 0 : (24 - shift);
-            for (int i = startPost; i < YYMMDDHHArray.length - windowSize; i += 24) {
-              double sum = 0.0;
-              boolean isValid = true;
-              for (int j = i + 0; j < i + windowSize; ++j) {
-                Integer YYMMDDHH = YYMMDDHHArray[j];
-                Double reading = sortedMap.get(YYMMDDHH);
-                if (reading < 0.0) {
-                  isValid = false;
-                  break;
-                }
-                point[j - i] = reading;
-                sum += reading.doubleValue();
-              }
-
-              if (isValid && (sum > 0.0)) {
-                int YYMMDDHH = (int) YYMMDDHHArray[i + shift].doubleValue();
-                String YYMMDD = String.valueOf(YYMMDDHH).substring(0, 6);
-                StringBuffer buf = new StringBuffer();
-                buf.append(meterID).append(YYMMDD).append("|");
-                for (int j = 0; j < windowSize; ++j) {
-                 // buf.append(point[j] / sum); // only for making centroid
-                  buf.append(point[j]);
-                  if (j < windowSize - 1) {
-                    buf.append(pointDelim);
-                  }
-                }
-                points.add(new Tuple2<Integer, String>(null, buf.toString()));
-              }
-            } // end For i
-            return points;
+            return list;
           }
-        })
-        .saveAsNewAPIHadoopFile(outputDir, NullWritable.class, Text.class, TextOutputFormat.class);
+        }).groupByKey()
+        .flatMapToPair(new PairFlatMapFunction<Tuple2<String, Iterable<Tuple2<String, Double[]>>>, String, String>() {
+          public Iterable<Tuple2<String, String>> call(Tuple2<String, Iterable<Tuple2<String, Double[]>>> x) throws Exception {
+            String meterID = x._1();
+            Iterator<Tuple2<String, Double[]>> itr = x._2().iterator(); // (YYMMDD, readingArray)
+            TreeMap<String, Double[]> sortedMap = new TreeMap<String, Double[]>();
+            while (itr.hasNext()) {
+              Tuple2<String, Double[]> t = itr.next();
+              sortedMap.put(t._1(), t._2());
+            }
 
+            Collection<String> YYMMDDs = sortedMap.keySet();
+            String[] YYMMDDArray = YYMMDDs.toArray(new String[YYMMDDs.size()]);
+
+            List<Tuple2<String, String>> ret = new ArrayList<Tuple2<String, String>>();
+            if (windowSize == 24) {
+              for (int i = 0; i < YYMMDDArray.length; ++i) {
+                String YYMMDD = YYMMDDArray[i];
+                Double[] dailyReadings = sortedMap.get(YYMMDD);
+                String dailyReadingStr = StringUtils.join(dailyReadings, ",");
+                ret.add(new Tuple2<String, String>(meterID + YYMMDD + "|" + dailyReadingStr, null));
+              }
+            } else {
+              Double[] readings = new Double[windowSize];
+              for (int i = 1; i < YYMMDDArray.length - 1; ++i) {
+                int n = (windowSize - 24) / 2;
+                Double[] pre = sortedMap.get(YYMMDDArray[i - 1]);
+                Double[] cur = sortedMap.get(YYMMDDArray[i]);
+                Double[] next = sortedMap.get(YYMMDDArray[i + 1]);
+                System.arraycopy(pre, 24 - n, readings, 0, n);
+                System.arraycopy(cur, 0, readings, n, 24);
+                System.arraycopy(next, 0, readings, n + 24, n);
+                String dailyReadingStr = StringUtils.join(readings, ",");
+                ret.add(new Tuple2<String, String>(meterID + YYMMDDArray[i] + "|" + dailyReadingStr, null));
+              }
+            }
+            return ret;
+          }
+        }).sortByKey(true)
+        .saveAsNewAPIHadoopFile(outputDir, NullWritable.class, Text.class, TextOutputFormat.class);
+    sc.close();
+  }
+
+  public static void prepareCentroids(final String inputDir, final String outputDir, final int windowSize) {
+    //8674350130131|0.533,0.436,0.45,0.463,0.458,1.088,0.617,0.549,0.261,0.22,1.188,0.257,0.23,0.246,0.246,0.278,0.36,0.404,0.538,0.665,0.717,0.813,0.62,0.376,0.352,0.353
+    SparkConf conf = new SparkConf().setAppName("Liu: Prepare centroids");
+    JavaSparkContext sc = new JavaSparkContext(conf);
+
+    List<Double[]> centroids = sc.textFile(inputDir)
+        .map(new Function<String, Double[]>() {
+          public Double[] call(String s) throws Exception {
+            String[] points = (s.split(fieldDelim)[1]).split(",");
+            int start = (windowSize - 24) / 2;
+            double sum = 0;
+            Double[] pointArray = new Double[24];
+            for (int i = start; i < start + 24; ++i) {
+              pointArray[i - start] = Double.parseDouble(points[i]);
+              sum += pointArray[i - start];
+            }
+            for (int i = 0; i < 24; ++i) {
+              pointArray[i] = pointArray[i] / sum;
+            }
+            return pointArray;
+          }
+        }).takeSample(false, 100);
+
+    List<String> centroidList = new ArrayList<String>();
+    for (int i = 0; i < centroids.size(); ++i) {
+      StringBuffer buf = new StringBuffer();
+      Double[] cents = centroids.get(i);
+      buf.append(i + 1).append("|");
+      for (int j = 0; j < cents.length; ++j) {
+        buf.append(cents[j]);
+        if (j != cents.length - 1) {
+          buf.append(",");
+        }
+      }
+      centroidList.add(buf.toString());
+    }
+
+    sc.parallelize(centroidList, 1).mapToPair(new PairFunction<String, String, String>() {
+      public Tuple2<String, String> call(String s) throws Exception {
+        return new Tuple2<String, String>(null, s);
+      }
+    }).saveAsNewAPIHadoopFile(outputDir, NullWritable.class, Text.class, TextOutputFormat.class);
     sc.close();
   }
 
   public static void main(String[] args) {
-    String usage = "java ca.uwaterloo.iss4e.clustering.PrepareDataPoints srcInputDir pointOutputDir windowSize";
-    if (args.length != 3) {
+    String usage = "java ca.uwaterloo.iss4e.clustering.PrepareDataPoints srcInputDir pointOutputDir centroidOutputDir windowSize";
+    if (args.length != 4) {
       log.error(usage);
     } else {
-      PrepareDataPoints.run(args[0],
-          args[1],
-          Integer.parseInt(args[2])
-      );
+      PrepareDataPoints.preparePoints(args[0], args[1], Integer.parseInt(args[3]));
+      PrepareDataPoints.prepareCentroids(args[1], args[2], Integer.parseInt(args[3]));
     }
   }
 }

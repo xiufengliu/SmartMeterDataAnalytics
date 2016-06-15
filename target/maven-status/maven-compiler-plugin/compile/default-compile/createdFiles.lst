@@ -4,12 +4,11 @@ ca/uwaterloo/iss4e/clustering/KSCClustering.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$7.class
 ca/uwaterloo/iss4e/datagen/DataPreparator$1$1.class
 ca/uwaterloo/iss4e/datagen/DataPreparator$Split.class
-ca/uwaterloo/iss4e/clustering/KSCClustering$16.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$10.class
 ca/uwaterloo/iss4e/Driver.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$8.class
+ca/uwaterloo/iss4e/clustering/PrepareDataPoints$5.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$5.class
-ca/uwaterloo/iss4e/clustering/KSCClustering$15.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$11.class
 ca/uwaterloo/iss4e/datagen/DataPreparator$3.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$6.class
@@ -24,11 +23,11 @@ ca/uwaterloo/iss4e/datagen/DataGenerator$4.class
 ca/uwaterloo/iss4e/datagen/DataPreparator$2.class
 ca/uwaterloo/iss4e/clustering/PrepareDataPoints.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$3.class
-ca/uwaterloo/iss4e/clustering/KSCClustering$17.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$4.class
+ca/uwaterloo/iss4e/clustering/PrepareDataPoints$4.class
 ca/uwaterloo/iss4e/datagen/DataGenerator$3.class
 ca/uwaterloo/iss4e/clustering/PrepareDataPoints$2.class
-ca/uwaterloo/iss4e/clustering/KSCClustering$14.class
 ca/uwaterloo/iss4e/datagen/DataPreparator.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$9.class
 ca/uwaterloo/iss4e/clustering/KSCClustering$CentroidPartitioner.class
+ca/uwaterloo/iss4e/clustering/PrepareDataPoints$3.class
