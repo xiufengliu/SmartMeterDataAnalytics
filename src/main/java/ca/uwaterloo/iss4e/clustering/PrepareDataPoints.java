@@ -24,7 +24,12 @@ import scala.Tuple2;
  */
 public class PrepareDataPoints {
   private static final Logger log = Logger.getLogger(PrepareDataPoints.class);
-  private static final String fieldDelim = "\\|";
+  //private static final String fieldDelim = "\\t";
+
+  public static boolean isNumeric(String str)
+  {
+    return str.matches("-?\\d+(.\\d+)?");
+  }
 
   public static void preparePoints(final String inputDir, final String outputDir, final int windowSize) {
     SparkConf conf = new SparkConf().setAppName("Liu: Prepare data points");
@@ -36,12 +41,14 @@ public class PrepareDataPoints {
         .flatMapToPair(new PairFlatMapFunction<String, String, Tuple2<Integer, Double>>() {
           public Iterable<Tuple2<String, Tuple2<Integer, Double>>> call(String s) throws Exception {
             List<Tuple2<String, Tuple2<Integer, Double>>> list = new ArrayList<Tuple2<String, Tuple2<Integer, Double>>>();
-            String[] fields = s.split(fieldDelim);
+            String[] fields = s.split("\t");
             if (fields.length>2) {
               String meterID = fields[0];
-              if (StringUtils.isNotEmpty(fields[2])&&StringUtils.isNumeric(fields[2])) {
-                Double reading = Double.parseDouble(fields[2]);
-                String[] arr = fields[1].replace("-", "").split(" ");
+              String timestamp = fields[1];
+              String readingStr = fields[2];
+              if (StringUtils.isNotEmpty(readingStr) && PrepareDataPoints.isNumeric(readingStr)) {
+                Double reading = Double.parseDouble(readingStr);
+                String[] arr = timestamp.replace("-", "").split(" ");
                 String ID = meterID + arr[0].substring(2); //1000 120101
                 Integer hour = Integer.parseInt(arr[1].split(":")[0]);
                 list.add(new Tuple2<String, Tuple2<Integer, Double>>(ID, new Tuple2<Integer, Double>(hour, reading)));
@@ -61,13 +68,18 @@ public class PrepareDataPoints {
             int cnt = 0;
             Double[] readings = new Double[24];
             double sum = 0.0;
+           // int zeros = 0;
+            //int ones = 0;
             while (itr.hasNext()) {
               Tuple2<Integer, Double> t = itr.next();
               int h = t._1();
               readings[h] = t._2();
               ++cnt;
+              //zeros += readings[h]==0.0?1:0;
+              //ones += readings[h]==1.0?1:0;
               sum += t._2().doubleValue();
             }
+            //boolean isSparse = (zeros==23)&&(ones==1);
             if (cnt==24 && sum>0.0) {
               list.add(new Tuple2<String, Tuple2<String, Double[]>>(meterID, new Tuple2<String, Double[]>(YYMMDD, readings)));
             }
@@ -124,7 +136,7 @@ public class PrepareDataPoints {
     List<Double[]> centroids = sc.textFile(inputDir)
         .map(new Function<String, Double[]>() {
           public Double[] call(String s) throws Exception {
-            String[] points = (s.split(fieldDelim)[1]).split(",");
+            String[] points = (s.split("\\|")[1]).split(",");
             int start = (windowSize - 24) / 2;
             double sum = 0;
             Double[] pointArray = new Double[24];
